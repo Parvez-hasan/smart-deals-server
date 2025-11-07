@@ -1,17 +1,67 @@
 const express = require('express');
 const cors = require('cors');
+require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const app = express();
 const port = process.env.PORT || 4000;
+
+// console.log(process.env);
+
+// firebase admin sdk
+const admin = require("firebase-admin");
+
+const serviceAccount = require("./smart-deals-739e8-firebase-adminsdk-fbsvc-41fbfd49e8.json");
+
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+
 
 // middleware
 app.use(cors());
 app.use(express.json());
 
+const logger = (req, res, next) => {
+    console.log('logger inoformetion');
+    next();
+}
+const varifyFirebaseToken = async (req,res, next) => {
+    console.log('in the varify meddlewares', req.headers.authorization);
+
+    if(!req.headers.authorization){
+        //do not allow access 
+        return res.status(401).send({message: 'unauthorizad access'})
+    }
+
+    const token = req.headers.authorization.split(' ')[1];
+    if(!token){
+       return res.status(401).send({message: 'unauthorizad access'})
+    }
+
+    // verify id token
+    try{
+         const userInfo =  await admin.auth().verifyIdToken(token);
+
+         // right email verify
+         req.token_email = userInfo.email;
+         console.log('after token valitaton' , userInfo);
+         next();
+         
+    }
+    catch{
+         return res.status(401).send({message: 'unauthorizad access'})
+    }
+
+    
+}
+
+
+
 // smartdbUser
 //is1DCTVoUgDygwZl
 
-const uri = "mongodb+srv://smartdbUser:is1DCTVoUgDygwZl@project-1.zd08b5r.mongodb.net/?appName=project-1";
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@project-1.zd08b5r.mongodb.net/?appName=project-1`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -20,8 +70,6 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   }
 });
-
-
 
 app.get('/', (req,res) => {
     res.send('smart server is running')  
@@ -33,7 +81,7 @@ async function run () {
         const db = client.db('smart_db')
         const productsCollection = db.collection('products');
         const bidsCollection = db.collection('bids');
-        const userCollection = db.collection('users')
+        const userCollection = db.collection('users');
 
          // users post
         app.post('/users', async(req, res) => {
@@ -51,7 +99,6 @@ async function run () {
               const result = await userCollection.insertOne(newUsers);
               res.send(result);
             }
-
            
         })
 
@@ -65,17 +112,23 @@ async function run () {
           //  const cursor = productsCollection.find().sort({price_min: 1}).limit(15).skip(3)
 
           // query perameters sistem
-           console.log(req.query);
+          // console.log(req.query);
            const email = req.query.email;
            const query = {}
            if(email){
             query.email = email;
            }
            
-
-          const cursor = productsCollection.find(query)
+          const cursor = productsCollection.find(query).sort({price_min: 1})
          
             //.project(projectFild);
+            const result = await cursor.toArray();
+            res.send(result);
+        })
+
+        // latest product api
+        app.get('/latest-product', async(req,res) => {
+            const cursor = productsCollection.find().sort({created_at: -1}).limit(6);
             const result = await cursor.toArray();
             res.send(result);
         })
@@ -84,6 +137,7 @@ async function run () {
         app.get('/products/:id', async (req, res) => {
             const id = req.params.id;
             const query = {_id: new ObjectId(id)};
+         //  const query = {_id: id};
             const result = await productsCollection.findOne(query);
             res.send(result);
         })
@@ -111,6 +165,7 @@ async function run () {
 
         })
 
+
         // delete medthod
         app.delete('/products/:id', async (req, res) => {
             const id = req.params.id;
@@ -121,21 +176,52 @@ async function run () {
         
         // bids releted api
 
-        app.get('/bids', async (req, res) => {
+        app.get('/bids', logger, varifyFirebaseToken, async (req, res) => {
+
+         //  console.log('headers', req);
+            
             const email = req.query.email;
             const query = {};
+
             if(email) {
+                //right email valited
+                if(email !== req.token_email){
+                    return res.status(403).send({message : 'forbidden access '})
+                }
                 query.buyer_email = email;
             }
+
             const  cursor = bidsCollection.find(query);
             const result = await cursor.toArray();
             res.send(result);
         })
 
+         app.get('/products/bids/:productId', varifyFirebaseToken, async(req, res ) => {
+           const productId = req.params.productId;
+           const query = { product: productId };
+           const cursor = bidsCollection.find(query).sort({ bid_price: -1})
+           const result = await cursor.toArray();
+           res.send(result);
+       })
+
+
          app.get('/bids/:id', async(req, res) => {
             const id = req.params.id;
             const query = { _id: new ObjectId(id)};
             const result = await bidsCollection.findOne(query);
+            res.send(result);
+        })
+
+        app.get('/bids', async (req, res ) => {
+           
+            // email diye my bids dekar jonno 
+            const query = {};
+            if(query.email){
+                query.buyer_email = email ;
+            }
+
+            const cursor = bidsCollection.find();
+            const result = await cursor.toArray();
             res.send(result);
         })
 
